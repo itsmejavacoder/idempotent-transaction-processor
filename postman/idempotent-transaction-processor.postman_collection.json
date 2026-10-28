@@ -1,0 +1,367 @@
+{
+  "info": {
+    "_postman_id": "c4f2b1a8-7d63-4a1e-9f2a-2b6d3c8e5f41",
+    "name": "Idempotent Transaction Processor",
+    "description": "End-to-end requests for the Idempotent Background Transaction Processing Service.\n\nStart the service first:\n\n  ./mvnw spring-boot:run\n\nImport this collection and run it against a fresh local database. The ingests are designed to run in order and use cumulative global sequences: single transaction 1, batch 2-3, upload 4-8. Delete ./data before a full run so every request is applied.\n\nCollection variables: baseUrl, transactionId, requestId, accountId, sequenceNumber.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "transactionId",
+      "value": "TXN-9001"
+    },
+    {
+      "key": "requestId",
+      "value": "REQ-9001"
+    },
+    {
+      "key": "accountId",
+      "value": "ACC-901"
+    },
+    {
+      "key": "sequenceNumber",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Ingest",
+      "item": [
+        {
+          "name": "Submit single transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('accepted or duplicate', () => pm.expect([200, 202]).to.include(pm.response.code));",
+                  "pm.test('returns transaction state', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.transactionId).to.eql(pm.collectionVariables.get('transactionId'));",
+                  "    pm.expect(['RECEIVED', 'DUPLICATE']).to.include(body.status);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"{{transactionId}}\",\n  \"requestId\": \"{{requestId}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"transactionType\": \"CREDIT\",\n  \"amount\": 125.00,\n  \"currency\": \"INR\",\n  \"sequenceNumber\": {{sequenceNumber}},\n  \"failuresBeforeSuccess\": 0\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"]
+            }
+          }
+        },
+        {
+          "name": "Submit JSON batch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('batch processed', () => pm.response.to.have.status(200));",
+                  "pm.test('per-record outcomes reported', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.total).to.eql(2);",
+                  "    pm.expect(body.results).to.be.an('array').with.lengthOf(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"transactionId\": \"TXN-9101\",\n    \"requestId\": \"REQ-9101\",\n    \"accountId\": \"ACC-902\",\n    \"transactionType\": \"CREDIT\",\n    \"amount\": 50.00,\n    \"currency\": \"INR\",\n    \"sequenceNumber\": 2,\n    \"failuresBeforeSuccess\": 0\n  },\n  {\n    \"transactionId\": \"TXN-9102\",\n    \"requestId\": \"REQ-9102\",\n    \"accountId\": \"ACC-902\",\n    \"transactionType\": \"DEBIT\",\n    \"amount\": 20.00,\n    \"currency\": \"INR\",\n    \"sequenceNumber\": 3,\n    \"failuresBeforeSuccess\": 0\n  }\n]"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Upload JSON file",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('upload processed', () => pm.response.to.have.status(200));",
+                  "pm.test('all five records accepted', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.total).to.eql(5);",
+                  "    pm.expect(body.accepted).to.eql(5);",
+                  "    pm.expect(body.rejected).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "samples/postman-upload.json"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "upload"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Process and inspect",
+      "item": [
+        {
+          "name": "Run processing pass",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('pass completed', () => pm.response.to.have.status(200));",
+                  "pm.test('recordsTouched reported', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.recordsTouched).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/process",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "process"]
+            }
+          }
+        },
+        {
+          "name": "Get transaction state",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('transaction found', () => pm.response.to.have.status(200));",
+                  "pm.test('has lifecycle status', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{transactionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "{{transactionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get transaction events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{transactionId}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "{{transactionId}}", "events"]
+            }
+          }
+        },
+        {
+          "name": "Get summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Get sequence report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('report returned', () => pm.response.to.have.status(200));",
+                  "pm.test('gap fields present', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('lastProcessedSequence');",
+                  "    pm.expect(body.missingSequences).to.be.an('array');",
+                  "    pm.expect(body.pendingTransactions).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/processing/sequence-report",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "processing", "sequence-report"]
+            }
+          }
+        },
+        {
+          "name": "Get account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/{{accountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "{{accountId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get ledger",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ledger returned', () => pm.response.to.have.status(200));",
+                  "pm.test('ledger is a list', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ledger",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ledger"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Errors",
+      "item": [
+        {
+          "name": "Reject invalid amount",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('validation error', () => pm.response.to.have.status(400));",
+                  "pm.test('consistent error body', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql(400);",
+                  "    pm.expect(body.message).to.include('amount');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"TXN-BAD\",\n  \"requestId\": \"REQ-BAD\",\n  \"accountId\": \"ACC-901\",\n  \"transactionType\": \"CREDIT\",\n  \"amount\": 0,\n  \"currency\": \"INR\",\n  \"sequenceNumber\": 99,\n  \"failuresBeforeSuccess\": 0\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"]
+            }
+          }
+        },
+        {
+          "name": "Unknown route returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('not found', () => pm.response.to.have.status(404));",
+                  "pm.test('consistent error body', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql(404);",
+                  "    pm.expect(body.message).to.eql('Resource not found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/does-not-exist",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "does-not-exist"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -86,7 +86,7 @@ Failure, duplicate, gap and restart paths are detailed in [DESIGN.md §16](DESIG
 Requirements: JDK 21. Maven is not required — the wrapper is included.
 
 ```bash
-./mvnw test          # 17 integration tests
+./mvnw test          # 18 integration tests
 ./mvnw spring-boot:run
 ```
 
@@ -120,6 +120,25 @@ H2 console is **disabled by default**. For local debugging:
 | `GET` | `/api/processing/sequence-report` | Stream position, missing sequences, blocked records |
 | `GET` | `/api/accounts/{id}` | Balance, currency and last applied sequence |
 | `GET` | `/api/ledger` | Ordered ledger entries |
+
+### OpenAPI and Postman
+
+The running service exposes a generated OpenAPI 3 document and Swagger UI:
+
+| Resource | URL |
+|---|---|
+| Swagger UI | `http://localhost:8080/swagger-ui.html` |
+| OpenAPI JSON | `http://localhost:8080/v3/api-docs` |
+
+Every controller operation is annotated with a summary and description, so the contract stays aligned with the code. The integration suite asserts that the document is served and contains the main API paths.
+
+A ready-to-run Postman collection is included at [`postman/idempotent-transaction-processor.postman_collection.json`](postman/idempotent-transaction-processor.postman_collection.json). Import it into Postman and run the folders in order:
+
+1. **Ingest** — single transaction, JSON batch, file upload
+2. **Process and inspect** — manual pass, transaction, events, summary, sequence report, account, ledger
+3. **Errors** — validation `400` and unknown-route `404`
+
+Collection variables control `baseUrl`, `transactionId`, `requestId`, `accountId` and `sequenceNumber`. Requests include assertions for the expected status codes and response fields. The ingests are designed to run in order and use cumulative global sequences: single transaction `1`, batch `2–3`, upload `4–8` from `samples/postman-upload.json`. Delete `./data` before a full run so every request is applied.
 
 ### Submit one transaction
 
@@ -284,7 +303,7 @@ No secrets are required or hardcoded.
 
 ## Tests
 
-`./mvnw test` runs 17 integration tests against H2:
+`./mvnw test` runs 18 integration tests against H2:
 
 - duplicate `transactionId` → one ledger entry, duplicate counted persistently
 - duplicate `requestId` for a different transaction → rejected
@@ -302,6 +321,7 @@ No secrets are required or hardcoded.
 - consistent API validation error body and a consistent `404` for unknown routes
 - lifecycle events recorded
 - concurrent duplicate submissions → one ledger entry
+- OpenAPI document served with every main API path
 
 ## Why JdbcTemplate instead of JPA?
 
@@ -331,13 +351,14 @@ JPA would be a reasonable choice for a richer domain or CRUD-heavy API. Here it 
 4. Distributed claim/lease with heartbeat instead of a single-row lock; add stale-claim recovery.
 5. Dead-letter queue and an explicit, audited replay/compensation procedure for `FAILED` records.
 6. Micrometer metrics (`processed`, `duplicate`, `failed`, `retry`, `pending`, stream lag) and alerting on gap age.
-7. OpenAPI contract, contract tests, Testcontainers integration tests, and a load test for duplicate storms.
+7. Contract tests, Testcontainers integration tests, and a load test for duplicate storms.
 8. Payload encryption/retention policy and PII classification; authentication and per-client rate limits.
 
 ## Project layout
 
 ```
 src/main/java/io/github/itsmejavacoder/txprocessor
+├── config/       OpenAPI definition
 ├── controller/   REST API, validation error mapping
 ├── dto/          request/response records
 ├── model/        status and type enums
@@ -348,6 +369,7 @@ src/main/resources
 ├── application.yml
 └── application-dev.yml
 samples/          sample inputs and captured output
+postman/          importable Postman collection
 ```
 
 ## License

@@ -359,6 +359,21 @@ class TransactionProcessingIntegrationTest {
         assertThat(countLedger("TX-RACE")).isEqualTo(1);
     }
 
+    @Test
+    void openApiDocumentIsExposedWithEveryApiPath() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.title")
+                        .value("Idempotent Background Transaction Processing Service"))
+                .andExpect(jsonPath("$.paths['/api/transactions']").exists())
+                .andExpect(jsonPath("$.paths['/api/transactions/batch']").exists())
+                .andExpect(jsonPath("$.paths['/api/transactions/upload']").exists())
+                .andExpect(jsonPath("$.paths['/api/transactions/process']").exists())
+                .andExpect(jsonPath("$.paths['/api/transactions/summary']").exists())
+                .andExpect(jsonPath("$.paths['/api/processing/sequence-report']").exists())
+                .andExpect(jsonPath("$.paths['/api/ledger']").exists());
+    }
+
     private TransactionRequest request(String txId, String requestId, String accountId,
                                        TransactionType type, String amount, long sequence, int failures) {
         return request(txId, requestId, accountId, type, amount, sequence, failures, "USD");

@@ -171,6 +171,7 @@ H2 coordinates locks inside one JVM and on one file database. Multi-instance dep
 | Transition history | `GET /api/transactions/{id}/events` |
 | Ordering health | `GET /api/processing/sequence-report` (stream position, gaps, blocked records) |
 | Ledger audit | `GET /api/ledger` |
+| API contract | `GET /v3/api-docs` (OpenAPI 3) and `/swagger-ui.html`, generated from the controller |
 
 The summary is a processing report rather than a full metrics stack. Micrometer counters and alerting on gap age are recommended for production.
 
@@ -185,7 +186,7 @@ The summary is a processing report rather than a full metrics stack. Micrometer 
 
 ## 13. Testing strategy
 
-17 integration tests run against in-memory H2 with the scheduler disabled:
+18 integration tests run against in-memory H2 with the scheduler disabled:
 
 - duplicate by `transactionId` and by `requestId`, including persisted duplicate counts;
 - conflicting payload and conflicting sequence slot;
@@ -197,7 +198,8 @@ The summary is a processing report rather than a full metrics stack. Micrometer 
 - multipart file ingestion;
 - consistent API error shape;
 - event history;
-- concurrent duplicate submissions.
+- concurrent duplicate submissions;
+- OpenAPI document served with every main API path.
 
 Tests assert database state (balances, ledger counts, statuses) rather than only HTTP responses. The suite uses H2 to keep the demo self-contained; a production port would add PostgreSQL integration tests.
 
@@ -223,7 +225,7 @@ These are conscious scope trade-offs, not unnoticed gaps.
 4. Distributed claim/lease with heartbeat and stale-claim recovery.
 5. Dead-letter handling, audited replay/compensation and operator tooling.
 6. Micrometer/Prometheus metrics, tracing, alerting on stream lag and gap age.
-7. OpenAPI contract, authentication, per-client rate limits, TLS.
+7. Contract tests, authentication, per-client rate limits, TLS.
 8. Testcontainers integration tests and a duplicate-storm load test.
 9. Retention and PII policy for payload storage; encrypt sensitive fields if they are added.
 
@@ -447,7 +449,7 @@ All reporting endpoints are read-only and do not take part in processing locks b
 | L2-FR-09 | Retry without duplicate effects | Retries before ledger write; ledger unique constraint |
 | L2-FR-10 | Separate business logic from input | Controller → ingestion adapter → processor → worker |
 | L2-FR-11 | Processing summary | Status counts, duplicates, ledger entries, generated time |
-| L2-FR-12 | Tests for duplicate/out-of-order/invalid/retry | 17 integration tests including concurrency |
+| L2-FR-12 | Tests for duplicate/out-of-order/invalid/retry | 18 integration tests including concurrency and OpenAPI exposure |
 
 ### Non-functional requirements
 
@@ -470,6 +472,7 @@ All reporting endpoints are read-only and do not take part in processing locks b
 | Retry is safe | Retry test asserts one ledger entry and correct attempts |
 | Invalid records isolated | Batch and file tests mix valid, invalid, malformed and duplicate records |
 | Clear lifecycle | Status enum, transitions and event history |
+| API contract available | OpenAPI at `/v3/api-docs`, Swagger UI, and the Postman collection |
 | Production implications explained | README and sections 14–15 |
 | End-to-end behaviour documented | Section 16 and README flow diagram |
 | Trade-offs and next steps identified | Sections 14–15 |
