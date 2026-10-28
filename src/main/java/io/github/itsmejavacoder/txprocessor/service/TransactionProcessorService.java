@@ -84,12 +84,6 @@ public class TransactionProcessorService {
             throw conflict("requestId already belongs to transaction " + byRequestId.transactionId());
         }
 
-        TransactionView bySequence = findBySequence(request.sequenceNumber());
-        if (bySequence != null) {
-            throw conflict("sequenceNumber " + request.sequenceNumber()
-                    + " is already assigned to transaction " + bySequence.transactionId());
-        }
-
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 jdbc.update("""
