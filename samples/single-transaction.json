@@ -1,0 +1,10 @@
+{
+  "transactionId": "TXN-9001",
+  "requestId": "REQ-9001",
+  "accountId": "ACC-901",
+  "transactionType": "CREDIT",
+  "amount": 125.00,
+  "currency": "INR",
+  "sequenceNumber": 1,
+  "failuresBeforeSuccess": 0
+}

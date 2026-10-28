@@ -1,0 +1,30 @@
+# Build output
+target/
+!.mvn/wrapper/maven-wrapper.properties
+
+# Runtime state (H2 file database)
+data/
+*.db
+*.mv.db
+*.trace.db
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS / logs
+.DS_Store
+Thumbs.db
+*.log
+logs/
+
+# Local overrides and secrets
+.env
+.env.*
+application-local.yml

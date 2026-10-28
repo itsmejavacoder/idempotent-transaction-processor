@@ -1,0 +1,62 @@
+[
+  {
+    "transactionId": "TXN-2002",
+    "requestId": "REQ-2",
+    "accountId": "ACC-201",
+    "transactionType": "DEBIT",
+    "amount": 40.00,
+    "currency": "INR",
+    "sequenceNumber": 2,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-2001",
+    "requestId": "REQ-1",
+    "accountId": "ACC-201",
+    "transactionType": "CREDIT",
+    "amount": 100.00,
+    "currency": "INR",
+    "sequenceNumber": 1,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-2002",
+    "requestId": "REQ-2-DUP",
+    "accountId": "ACC-201",
+    "transactionType": "DEBIT",
+    "amount": 40.00,
+    "currency": "INR",
+    "sequenceNumber": 2,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-2003",
+    "requestId": "REQ-3",
+    "accountId": "ACC-201",
+    "transactionType": "CREDIT",
+    "amount": 25.00,
+    "currency": "INR",
+    "sequenceNumber": 3,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-2004",
+    "requestId": "REQ-4",
+    "accountId": "ACC-202",
+    "transactionType": "DEBIT",
+    "amount": -10.00,
+    "currency": "INR",
+    "sequenceNumber": 4,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-2005",
+    "requestId": "REQ-5",
+    "accountId": "ACC-203",
+    "transactionType": "CREDIT",
+    "amount": 500.00,
+    "currency": "INR",
+    "sequenceNumber": 5,
+    "failuresBeforeSuccess": 1
+  }
+]

@@ -1,0 +1,52 @@
+[
+  {
+    "transactionId": "TXN-1001",
+    "requestId": "REQ-1001",
+    "accountId": "ACC-301",
+    "transactionType": "CREDIT",
+    "amount": 100.00,
+    "currency": "INR",
+    "sequenceNumber": 1,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-1002",
+    "requestId": "REQ-1002",
+    "accountId": "ACC-301",
+    "transactionType": "DEBIT",
+    "amount": 40.00,
+    "currency": "INR",
+    "sequenceNumber": 2,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-1003",
+    "requestId": "REQ-1003",
+    "accountId": "ACC-301",
+    "transactionType": "CREDIT",
+    "amount": 25.00,
+    "currency": "INR",
+    "sequenceNumber": 3,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-1004",
+    "requestId": "REQ-1004",
+    "accountId": "ACC-302",
+    "transactionType": "CREDIT",
+    "amount": 10.00,
+    "currency": "INR",
+    "sequenceNumber": 4,
+    "failuresBeforeSuccess": 0
+  },
+  {
+    "transactionId": "TXN-1005",
+    "requestId": "REQ-1005",
+    "accountId": "ACC-303",
+    "transactionType": "CREDIT",
+    "amount": 500.00,
+    "currency": "INR",
+    "sequenceNumber": 5,
+    "failuresBeforeSuccess": 1
+  }
+]

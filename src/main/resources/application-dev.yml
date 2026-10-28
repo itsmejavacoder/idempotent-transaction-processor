@@ -1,0 +1,11 @@
+# Local-only profile: enables the H2 console at http://localhost:8080/h2-console
+# (JDBC URL: jdbc:h2:file:./data/transactiondb, user: sa, empty password).
+spring:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+logging:
+  level:
+    io.github.itsmejavacoder.txprocessor: DEBUG
