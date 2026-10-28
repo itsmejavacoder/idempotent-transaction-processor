@@ -114,17 +114,17 @@ Semantics:
 | Same `requestId`, different transaction | `409 Conflict` |
 | Same sequence slot, different transaction | `409 Conflict` |
 
-Duplicates are **persisted** in `duplicate_requests`, so the summary is correct after a restart. The original implementation counted them in an `AtomicLong`, which reset to zero on every boot.
+Duplicates are **persisted** in `duplicate_requests`, so the summary is correct after a restart.
 
 ## 7. Ordering decision
 
 The brief offers Option A (sequence), Option B (state transitions) and Option C (latest-state). Option A was selected because it makes the ordering contract explicit and matches the suggested test data, which uses sequences 1–5 across three accounts.
 
-**Global, not per-account.** A per-account stream would let `ACC-202` start at sequence 4 and `ACC-203` at 5, which contradicts the brief's expected outcomes. The original ChatGPT implementation did exactly that and rewrote the sample data to fit. This version keeps the brief's sample and uses one global stream.
+**Global, not per-account.** A per-account stream would let `ACC-202` start at sequence 4 and `ACC-203` at 5, which contradicts the sample's expected outcomes. This design uses one global stream so the provided sample runs unchanged.
 
 Consequences:
 
-- Processing is serialized on one row. This is deliberate for the assessment and is called out as the first production scaling limit.
+- Processing is serialized on one row. This is deliberate for this scope and is called out as the first production scaling limit.
 - A permanently failed record consumes its sequence. Otherwise one insufficient-funds record would block every later record forever. The failure and reason remain in `transactions` and `transaction_events`.
 - A validation-rejected record never enters the table, so its sequence becomes a real gap. `GET /api/processing/sequence-report` reports it with the blocked records and their `last_error`. It is not silently skipped.
 - Sequence numbers are unique. A second transaction claiming an occupied slot is rejected at submission.
@@ -199,7 +199,7 @@ The summary is a processing report rather than a full metrics stack. Micrometer 
 - event history;
 - concurrent duplicate submissions.
 
-Tests assert database state (balances, ledger counts, statuses) rather than only HTTP responses. The suite avoids Testcontainers because the assessment explicitly accepts lightweight local persistence; a production port would add PostgreSQL integration tests.
+Tests assert database state (balances, ledger counts, statuses) rather than only HTTP responses. The suite uses H2 to keep the demo self-contained; a production port would add PostgreSQL integration tests.
 
 ## 14. Trade-offs and limitations
 
@@ -213,7 +213,7 @@ Tests assert database state (balances, ledger counts, statuses) rather than only
 | Scheduler in-process | Simple demo | No distributed claim or lease |
 | JSON array batch | Simple contract | A broken document fails as a whole |
 
-These are conscious assessment trade-offs, not unnoticed gaps.
+These are conscious scope trade-offs, not unnoticed gaps.
 
 ## 15. Production hardening
 
@@ -227,21 +227,208 @@ These are conscious assessment trade-offs, not unnoticed gaps.
 8. Testcontainers integration tests and a duplicate-storm load test.
 9. Retention and PII policy for payload storage; encrypt sensitive fields if they are added.
 
-## 16. AI-assisted development
+## 16. End-to-end flows
 
-The baseline was produced by ChatGPT from the brief. It was then validated line by line against the functional requirements, non-functional requirements and acceptance criteria. The review found:
+The diagrams below follow a request from the boundary to the committed ledger. Each box names the owning class or table.
 
-- 6 tests and no batch/file ingestion;
-- `requestId` persisted but never used for duplicate detection;
-- per-account ordering incompatible with the brief's global sample, with the sample rewritten to fit;
-- no missing-sequence reporting;
-- duplicate counts held in memory;
-- no transition history;
-- currency validation ordered before sequence handling, allowing the stream to advance past skipped work;
-- H2 console enabled by default;
-- no Maven wrapper, CI, license or captured sample output.
+### 16.1 Startup and wiring
 
-The published version replaces the in-memory duplicate counter with a table, moves ordering to a global Option A stream, adds batch and multipart ingestion with per-record isolation, enforces `requestId`, adds the event trail and gap report, fixes the validation-order issue, adds sequence uniqueness, normalises API errors, hardens configuration, adds the wrapper/CI/license, and expands the suite to 17 tests. Each change is exercised by a test or a captured live response. `JdbcTemplate` was retained deliberately; the reasoning is in section 14 and the README.
+```text
+Spring Boot starts
+  ├─ schema.sql
+  │    ├─ CREATE TABLE IF NOT EXISTS transactions/accounts/ledger_entries
+  │    ├─ CREATE TABLE IF NOT EXISTS processing_stream/duplicate_requests/transaction_events
+  │    ├─ create unique constraints and indexes
+  │    └─ seed processing_stream(id=1, last_sequence=0) if absent
+  ├─ wire TransactionController → BatchIngestionService → TransactionProcessorService
+  └─ schedule TransactionWorker every processor.poll-interval-ms
+```
+
+The schema step is idempotent, so a restart keeps existing rows and the stream position. `spring.sql.init.mode=always` runs it on every boot; the stream seed only inserts when the row is missing.
+
+### 16.2 Single request — happy path
+
+```text
+Client                 API                    DB                     Worker
+  │ POST /transactions  │                      │                       │
+  ├────────────────────►│ @Valid               │                       │
+  │                     ├─ currency check ────►│                       │
+  │                     ├─ txId/requestId ────►│                       │
+  │                     ├─ INSERT RECEIVED ───►│                       │
+  │                     ├─ INSERT event ──────►│                       │
+  │◄── 202 RECEIVED ────┤                      │                       │
+  │                     │                      │◄── poll ──────────────┤
+  │                     │                      │   SELECT work         │
+  │                     │                      │◄── BEGIN ─────────────┤
+  │                     │                      │   lock tx/account/stream
+  │                     │                      │   sequence == last+1
+  │                     │                      │   INSERT ledger       │
+  │                     │                      │   UPDATE balance      │
+  │                     │                      │   UPDATE stream       │
+  │                     │                      │   UPDATE PROCESSED    │
+  │                     │                      │   INSERT event        │
+  │                     │                      │◄── COMMIT ────────────┤
+  │ GET /transactions/{id}                     │                       │
+  ├────────────────────►│─────────────────────►│                       │
+  │◄── PROCESSED ───────┤                      │                       │
+```
+
+Submission is synchronous only up to durable persistence. Processing is asynchronous: the response is `202` with `RECEIVED`, and a `GET` may return `RECEIVED` or `PROCESSED` depending on whether the worker has run. The balance, ledger, stream position and status are one commit; there is no observable state where the ledger moved but the status did not.
+
+### 16.3 Batch and file ingestion
+
+```text
+POST /transactions/batch          POST /transactions/upload
+        │                                  │
+        └──────────────┬───────────────────┘
+                       ▼
+              BatchIngestionService
+                       │
+        for each element in the document:
+          ├─ deserialize ──► malformed?  → REJECTED, continue
+          ├─ Bean Validation ──► invalid? → REJECTED, continue
+          ├─ submit()
+          │     ├─ duplicate ─────────────► DUPLICATE, continue
+          │     ├─ requestId/sequence clash → REJECTED, continue
+          │     └─ valid ────────────────► RECEIVED + event
+          └─ collect per-record outcome
+                       │
+                       ▼
+        { total, accepted, duplicates, rejected, results[] }
+```
+
+`ACCEPTED` means persisted for background processing, not applied yet. A bad element never rolls back the batch; it is reported at its index. A syntactically broken document still fails as a whole with `400`, because there is nothing to iterate.
+
+The worker later applies the contiguous accepted sequences in one or more passes. A rejected sequence is not stored, so a higher accepted sequence that depends on it waits and appears in the gap report.
+
+### 16.4 Out-of-order arrival and gaps
+
+```text
+Initial stream.last_sequence = 0
+
+submit TXN-seq2
+  worker: expected 1, received 2 → PENDING_SEQUENCE ("Waiting for sequence 1")
+
+submit TXN-seq1
+  worker: expected 1, received 1 → PROCESSED, stream = 1
+
+next pass
+  worker: expected 2, received 2 → PROCESSED, stream = 2
+```
+
+If a later record has no predecessor because its predecessor was rejected or never sent:
+
+```text
+stream = 3
+stored rows: seq5 = PENDING_SEQUENCE
+no row for seq4
+
+GET /api/processing/sequence-report
+{
+  "lastProcessedSequence": 3,
+  "highestObservedSequence": 5,
+  "missingSequences": [4],
+  "pendingTransactions": [
+    {"transactionId": "TXN-2005", "sequenceNumber": 5, "status": "PENDING_SEQUENCE"}
+  ]
+}
+```
+
+A gap is observable when a later stored sequence reveals it. A rejected record at the very end of the stream has no row and therefore no visible gap until another record arrives. This is a property of sequence-based ordering, not an omission.
+
+### 16.5 Duplicate submissions and the insert race
+
+```text
+T1 and T2 submit the same transaction at the same time
+
+T1: pre-check txId/requestId → none
+T2: pre-check txId/requestId → none (T1 not committed yet)
+
+T1: INSERT → COMMIT
+T2: INSERT → waits on unique index
+        → DuplicateKeyException
+        → resolveInsertRace()
+             ├─ re-read txId   → finds T1 → same payload? → DUPLICATE
+             ├─ re-read requestId → reused by another tx? → 409
+             └─ re-read sequence  → slot owned by another tx? → 409
+```
+
+The database unique constraints are the authority; the pre-checks are only an optimisation. The losing writer never inserts a ledger row because it never gets past the transaction insert. The duplicate is recorded in `duplicate_requests`, so the count survives a restart.
+
+### 16.6 Transient failure and retry
+
+```text
+attempt 1
+  BEGIN
+    status = PROCESSING, attempts = 1
+    simulated failure before any balance/ledger write
+    status = RETRY_PENDING, last_error = "Simulated transient failure; will retry"
+  COMMIT
+
+attempt 2
+  BEGIN
+    status = PROCESSING, attempts = 2
+    INSERT ledger
+    UPDATE balance
+    UPDATE stream
+    status = PROCESSED
+  COMMIT
+```
+
+The retry path writes nothing to `accounts` or `ledger_entries` before the success path, so a retry cannot double-post. `processor.max-retries` caps transient attempts; attempt `max-retries + 1` is terminal.
+
+### 16.7 Terminal failure and stream progress
+
+```text
+insufficient funds / retry exhausted / currency backstop
+  ├─ status = FAILED, last_error = reason
+  ├─ INSERT event FAILED
+  └─ processing_stream.last_sequence = this sequence   (conditional advance)
+```
+
+A permanently failed record must not block the rest of the stream, so the slot is consumed and the next sequence becomes eligible. The failed row remains queryable with its reason and event history. It is not a gap because a row exists for that sequence.
+
+There is no automatic replay: resetting the record to `RECEIVED` would hit the stale-sequence guard. Recovery requires an operator decision and either a new sequence or a compensating entry. See section 15.
+
+### 16.8 Crash and restart
+
+```text
+BEGIN
+  lock transaction, account, stream
+  apply balance + ledger + stream + status
+COMMIT
+```
+
+- A crash **before** commit rolls the entire record back. The previous status remains (`RECEIVED`, `PENDING_SEQUENCE` or `RETRY_PENDING`) and the next pass retries it.
+- `PROCESSING` is written inside the same transaction, so it is never left behind as a stuck claim.
+- A crash **after** commit has the ledger, balance, stream and status all durable together.
+- The file-backed H2 database keeps committed state, stream position, duplicate history and events across restarts; startup re-runs the idempotent schema.
+- The design is single-node. Multiple instances against one file database are not supported; H2 row locks coordinate threads inside one JVM, not a cluster.
+
+### 16.9 Read and reporting paths
+
+| Endpoint | Reads from | Purpose |
+|---|---|---|
+| `GET /api/transactions/{id}` | `transactions` | Current state, attempts, last error |
+| `GET /api/transactions/{id}/events` | `transaction_events` | Ordered transition history |
+| `GET /api/transactions/summary` | `transactions`, `duplicate_requests`, `ledger_entries` | Status counts, duplicate total, ledger total |
+| `GET /api/processing/sequence-report` | `processing_stream`, `transactions` | Stream position, gaps, blocked records |
+| `GET /api/accounts/{id}` | `accounts` | Balance, currency, last applied sequence |
+| `GET /api/ledger` | `ledger_entries` | Immutable applied effects |
+
+All reporting endpoints are read-only and do not take part in processing locks beyond normal statement reads.
+
+### 16.10 Flow-to-code map
+
+| Flow | Entry point | Core code | Tables |
+|---|---|---|---|
+| Single submit | `POST /api/transactions` | `TransactionController.submit` → `TransactionProcessorService.submit` | `transactions`, `transaction_events`, `duplicate_requests` |
+| Batch submit | `POST /api/transactions/batch` | `submitBatch` → `BatchIngestionService.ingest` | same as above, per element |
+| File submit | `POST /api/transactions/upload` | `upload` → `BatchIngestionService.ingestFile` | same as above, per element |
+| Background pass | scheduler | `TransactionWorker.processPending` → `processPendingTransactions` | all processing tables |
+| Manual pass | `POST /api/transactions/process` | `TransactionController.processNow` | all processing tables |
+| Ordered apply | inside a pass | `processOne` | locks `transactions`, `accounts`, `processing_stream`; writes `ledger_entries`, `transaction_events` |
+| Reports | `GET /summary`, `/sequence-report`, `/events`, `/ledger` | `getSummary`, `getSequenceReport`, `getEvents`, `getLedger` | read-only |
 
 ## 17. Requirement traceability
 
@@ -272,7 +459,7 @@ The published version replaces the in-memory duplicate counter with a table, mov
 | 6.4 Consistency | No partial state | Met (single transaction per record) |
 | 6.5 Observability | Processing visibility | Met (summary, event history, sequence report, structured logs) |
 | 6.6 Security/data handling | Validate input, no secrets, safe errors, avoid sensitive logs | Met within scope; auth/TLS platform-provided |
-| 6.7 Maintainability | Modular, rules separated, tests | Met at assessment scale; repository abstraction is a production refactor |
+| 6.7 Maintainability | Modular, rules separated, tests | Met at this scale; repository abstraction is a production refactor |
 
 ### Acceptance criteria
 
@@ -284,5 +471,5 @@ The published version replaces the in-memory duplicate counter with a table, mov
 | Invalid records isolated | Batch and file tests mix valid, invalid, malformed and duplicate records |
 | Clear lifecycle | Status enum, transitions and event history |
 | Production implications explained | README and sections 14–15 |
-| AI assistance and validation explained | Section 16 |
+| End-to-end behaviour documented | Section 16 and README flow diagram |
 | Trade-offs and next steps identified | Sections 14–15 |
